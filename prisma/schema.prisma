@@ -1,0 +1,274 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+  name          String?
+
+  walletAddress String? @unique
+  walletNonce   String?
+
+  // --- Strava Specific Fields ---
+  stravaId           String?   @unique
+  stravaAccessToken  String?
+  stravaRefreshToken String?
+  stravaTokenExpiry  DateTime?
+  stravaConnected    Boolean   @default(false)
+  lastStravaSync     DateTime? // <--- ADDED: To track when we last fetched data
+
+  accounts        Account[]
+  sessions        Session[]
+  challenges      Challenge[]
+  bets            Bet[]
+  workouts        Workout[]
+  checkIns        DailyCheckIn[]
+  aiConversations AiConversation[]
+
+  @@map("users")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+enum ChallengeStatus {
+  INITIALIZED
+  ACTIVE
+  PENDING_RESOLUTION
+  COMPLETED
+  FAILED
+  RESOLVED
+  DISPUTED
+  CANCELLED
+}
+
+enum GoalType {
+  DISTANCE_KM
+  WEIGHT_LOSS_KG
+  WORKOUT_COUNT
+  CALORIES_BURNED
+  CUSTOM
+}
+
+enum ChallengeMode {
+  SINGLE_DAY
+  MULTI_DAY
+}
+
+model Challenge {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  title           String
+  description     String?         @db.Text
+  challengeMode   ChallengeMode   @default(SINGLE_DAY)
+  goalType        GoalType
+  goalTarget      Float
+  goalUnit        String
+  deadline        DateTime
+  status          ChallengeStatus @default(INITIALIZED)
+  checkInSource   WorkoutSource   @default(MANUAL)
+
+  resolvedAt      DateTime?
+  resolvedSuccess Boolean?
+  resolutionNote  String?  @db.Text
+  disputeDeadline DateTime?
+  disputeReason   String?  @db.Text
+
+  contractChallengeId String?
+  txHash              String?
+
+  inviteToken     String?  @unique // Secret token for invite-only betting
+
+  currentProgress Float @default(0)
+
+  creatorId String
+  creator   User         @relation(fields: [creatorId], references: [id])
+  bets      Bet[]
+  workouts  Workout[]
+  checkIns  DailyCheckIn[]
+
+  @@map("challenges")
+}
+
+enum BetSide {
+  FOR
+  AGAINST
+}
+
+enum BetStatus {
+  PENDING
+  CONFIRMED
+  WON
+  LOST
+  REFUNDED
+}
+
+model Bet {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  amountEth    String
+  amountWei    String
+  side         BetSide
+  status       BetStatus @default(PENDING)
+  txHash       String?
+  onChainBetId String?
+  payoutTxHash String?
+  payoutAmount String?
+
+  userId      String
+  user        User      @relation(fields: [userId], references: [id])
+  challengeId String
+  challenge   Challenge @relation(fields: [challengeId], references: [id])
+
+  @@map("bets")
+}
+
+enum WorkoutType {
+  RUN
+  RIDE
+  SWIM
+  WALK
+  HIKE
+  WEIGHT_TRAINING
+  YOGA
+  CROSSFIT
+  SPORT
+  OTHER
+}
+
+enum WorkoutSource {
+  MANUAL
+  STRAVA
+  APPLE_HEALTH
+}
+
+model Workout {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  name            String?
+  workoutType     WorkoutType
+  source          WorkoutSource @default(MANUAL)
+  
+  startTime       DateTime
+  endTime         DateTime?
+  
+  // Standard metrics
+  durationSeconds Int?          // Usually "Elapsed Time"
+  distanceMeters  Float?
+  elevationGainM  Float?
+  caloriesBurned  Int?
+  avgHeartRate    Int?
+  weightKg        Float?
+  
+  // --- Strava Specific Metrics ---
+  movingTime      Int?          // <--- ADDED: Strava differentiates moving vs elapsed
+  mapPolyline     String?       @db.Text // <--- ADDED: To render the route on a map
+  stravaData      Json?         // <--- ADDED: Store raw JSON from Strava for extra details (watts, device, etc)
+  
+  notes           String?       @db.Text
+  stravaActivityId String?      @unique
+
+  userId      String
+  user        User       @relation(fields: [userId], references: [id])
+  challengeId String?
+  challenge   Challenge? @relation(fields: [challengeId], references: [id])
+
+  @@map("workouts")
+}
+
+model DailyCheckIn {
+  id        String        @id @default(cuid())
+  date      DateTime      @db.Date
+  note      String?
+  source    WorkoutSource @default(MANUAL)
+  createdAt DateTime      @default(now())
+
+  challengeId String
+  challenge   Challenge @relation(fields: [challengeId], references: [id])
+  userId      String
+  user        User      @relation(fields: [userId], references: [id])
+
+  @@unique([challengeId, date])
+  @@map("daily_checkins")
+}
+
+model AiConversation {
+  id        String      @id @default(cuid())
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+  title     String?
+  messages  AiMessage[]
+  userId    String
+  user      User        @relation(fields: [userId], references: [id])
+
+  @@map("ai_conversations")
+}
+
+enum MessageRole {
+  USER
+  ASSISTANT
+}
+
+model AiMessage {
+  id             String         @id @default(cuid())
+  createdAt      DateTime       @default(now())
+  role           MessageRole
+  content        String         @db.Text
+  tokensUsed     Int?
+  conversationId String
+  conversation   AiConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@map("ai_messages")
+}
