@@ -50,7 +50,7 @@ export default function LoginPage() {
         {/* Logo */}
         <div className="flex items-center justify-center gap-2 mb-8">
           <Dumbbell className="text-green-400" size={28} />
-          <span className="text-white font-bold text-2xl">FitBet</span>
+          <span className="text-white font-bold text-2xl">GrindStake</span>
         </div>
 
         <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-8">

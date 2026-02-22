@@ -16,7 +16,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "FitBet — Bet on Your Goals",
+  title: "GrindStake — Bet on Your Goals",
   description:
     "Fitness accountability through crypto-powered betting and AI coaching",
 };
