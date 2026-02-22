@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -39,6 +39,9 @@ export function ChallengeForm() {
   const [step, setStep] = useState<"form" | "tx" | "saving">("form");
   const [error, setError] = useState<string | null>(null);
   const [formData, setFormData] = useState<FormData | null>(null);
+  
+  // Ref to prevent multiple database submissions
+  const hasSaved = useRef(false);
 
   const { isConnected } = useAccount();
   const { writeContract, data: txHash, isPending } = useWriteContract();
@@ -59,13 +62,31 @@ export function ChallengeForm() {
   const days = watch("days") ?? 1;
   const isMultiDay = days > 1;
 
+  // Sync with Database after Transaction success
+  useEffect(() => {
+    if (isSuccess && receipt && formData && step === "tx" && !hasSaved.current) {
+      const processSave = async () => {
+        hasSaved.current = true; // Mark as started to prevent duplicate calls
+        setStep("saving");
+        
+        // Find the ChallengeCreated event in the logs
+        // Topic 1 is usually the indexed challengeId in your Solidity event
+        const log = receipt.logs[0];
+        const contractId = log?.topics?.[1] ? String(BigInt(log.topics[1])) : undefined;
+        
+        await saveChallenge(formData, txHash, contractId);
+      };
+      
+      processSave();
+    }
+  }, [isSuccess, receipt, formData, step, txHash]);
+
   // Auto-set deadline when days changes
   function handleDaysChange(val: number) {
     if (val > 0) {
       const deadline = new Date();
       deadline.setDate(deadline.getDate() + val);
       deadline.setHours(23, 59);
-      // Format as datetime-local value
       const pad = (n: number) => String(n).padStart(2, "0");
       const formatted = `${deadline.getFullYear()}-${pad(deadline.getMonth() + 1)}-${pad(deadline.getDate())}T${pad(deadline.getHours())}:${pad(deadline.getMinutes())}`;
       setValue("deadline", formatted);
@@ -98,21 +119,15 @@ export function ChallengeForm() {
     }
   }
 
-  if (isSuccess && receipt && formData && step === "tx") {
-    setStep("saving");
-    const log = receipt.logs[0];
-    const contractChallengeId = log?.topics?.[1] ? String(BigInt(log.topics[1])) : undefined;
-    saveChallenge(formData, txHash, contractChallengeId);
-  }
-
   async function saveChallenge(
     data: FormData,
-    txHash: string | undefined,
+    transactionHash: string | undefined,
     contractChallengeId: string | undefined
   ) {
-    setStep("saving");
     try {
       const multiDay = (data.days ?? 1) > 1;
+      const formattedDeadline = new Date(data.deadline).toISOString();
+
       const res = await fetch("/api/challenges", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -123,18 +138,26 @@ export function ChallengeForm() {
           goalType: multiDay ? "WORKOUT_COUNT" : data.goalType,
           goalTarget: multiDay ? data.days : data.goalTarget,
           goalUnit: multiDay ? "days" : goalUnitMap[data.goalType as GoalType],
-          deadline: new Date(data.deadline).toISOString(),
+          deadline: formattedDeadline,
           checkInSource: data.checkInSource,
-          txHash,
+          txHash: transactionHash,
           contractChallengeId,
         }),
       });
-      if (!res.ok) throw new Error("Failed to create challenge");
+
+      if (!res.ok) {
+        const errorData = await res.json();
+        console.error("API Error Response:", errorData);
+        throw new Error("Failed to save challenge");
+      }
+
       const challenge = await res.json();
       router.push(`/challenges/${challenge.id}`);
-    } catch {
-      setError("Challenge created on-chain but failed to save. Please try again.");
+    } catch (err) {
+      console.error(err);
+      setError("Challenge confirmed on-chain, but failed to save to database. Check console.");
       setStep("form");
+      hasSaved.current = false; // Allow retry if save failed
     }
   }
 
@@ -259,40 +282,32 @@ export function ChallengeForm() {
         />
       </div>
 
-      {
-        error && (
-          <div className="flex items-center gap-2 text-red-400 text-sm bg-red-400/10 rounded-lg px-3 py-2">
-            <AlertCircle size={14} />
-            {error}
-          </div>
-        )
-      }
+      {error && (
+        <div className="flex items-center gap-2 text-red-400 text-sm bg-red-400/10 rounded-lg px-3 py-2">
+          <AlertCircle size={14} />
+          {error}
+        </div>
+      )}
 
-      {
-        step === "tx" && (
-          <div className="flex items-center gap-2 text-yellow-400 text-sm bg-yellow-400/10 rounded-lg px-3 py-2">
-            <span className="w-4 h-4 border-2 border-yellow-400 border-t-transparent rounded-full animate-spin" />
-            {isPending ? "Confirm in your wallet..." : isConfirming ? "Waiting for confirmation..." : "Processing..."}
-          </div>
-        )
-      }
+      {step === "tx" && (
+        <div className="flex items-center gap-2 text-yellow-400 text-sm bg-yellow-400/10 rounded-lg px-3 py-2">
+          <span className="w-4 h-4 border-2 border-yellow-400 border-t-transparent rounded-full animate-spin" />
+          {isPending ? "Confirm in your wallet..." : isConfirming ? "Waiting for confirmation..." : "Processing..."}
+        </div>
+      )}
 
-      {
-        step === "saving" && (
-          <div className="flex items-center gap-2 text-green-400 text-sm bg-green-400/10 rounded-lg px-3 py-2">
-            <CheckCircle size={14} />
-            Saving your challenge...
-          </div>
-        )
-      }
+      {step === "saving" && (
+        <div className="flex items-center gap-2 text-green-400 text-sm bg-green-400/10 rounded-lg px-3 py-2">
+          <CheckCircle size={14} />
+          Saving your challenge...
+        </div>
+      )}
 
-      {
-        !isConnected && (
-          <p className="text-xs text-zinc-500">
-            Not connected to wallet — challenge will be created without on-chain registration. Connect wallet to enable betting.
-          </p>
-        )
-      }
+      {!isConnected && (
+        <p className="text-xs text-zinc-500">
+          Not connected to wallet — challenge will be created without on-chain registration. Connect wallet to enable betting.
+        </p>
+      )}
 
       <Button
         type="submit"
@@ -300,8 +315,8 @@ export function ChallengeForm() {
         loading={step !== "form"}
         disabled={step !== "form"}
       >
-        {isConnected ? "Create Challenge (Stake 0.02 tBNB)" : "Create Challenge"}
+        {isConnected ? "Create Challenge (Stake 0.02 ETH)" : "Create Challenge"}
       </Button>
-    </form >
+    </form>
   );
 }

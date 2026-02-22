@@ -8,7 +8,7 @@ export const wagmiConfig = createConfig({
   chains: [bscTestnet, mainnet],
   connectors: [metaMask(), injected()],
   transports: {
-    [bscTestnet.id]: http(process.env.NEXT_PUBLIC_BNB_RPC_URL),
+    [bscTestnet.id]: http(process.env.NEXT_PUBLIC_ARBITRUM_RPC_URL),
     [mainnet.id]: http(process.env.NEXT_PUBLIC_MAINNET_RPC_URL),
   },
 });

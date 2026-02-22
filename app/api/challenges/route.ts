@@ -29,10 +29,12 @@ export async function POST(req: NextRequest) {
 
   const body = await req.json();
   const parsed = CreateChallengeSchema.safeParse(body);
+  
   if (!parsed.success) {
+    // ADD THIS LOG:
+    console.log("Zod Validation Failed:", JSON.stringify(parsed.error.format(), null, 2));
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
-
   const challenge = await prisma.challenge.create({
     data: {
       title: parsed.data.title,
